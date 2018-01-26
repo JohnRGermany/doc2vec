@@ -1,0 +1,6 @@
+graph.*
+do_vectors/
+stored_models/
+most_similars.json
+doc2vec.log
+__pycache__/
