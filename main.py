@@ -320,7 +320,8 @@ def run(FLAGS):
         save_model(model, FLAGS.save_dir)
     vectors = vectorize_documents(model, filenames, FLAGS.vec_dir, train_corpus, FLAGS.num_features)
     labels = get_labels(FLAGS.label_file)
-    create_most_similar_json(model, train_corpus, 10, labels, filenames, FLAGS.doc_dir)
+    n = 10 if len(filenames) >= 10 else len(filenames)
+    create_most_similar_json(model, train_corpus, n, labels, filenames, FLAGS.doc_dir)
     if FLAGS.plot != 0:
         plot_tsne(vectors, labels, filenames, FLAGS.doc_dir)
 
@@ -382,20 +383,15 @@ if __name__ == '__main__':
       help='Whether or an ouput plot is created. 0 for no plotting.'
     )
     FLAGS, unparsed = parser.parse_known_args()
-    # create logger with 'spam_application'
-    logger = logging.getLogger('__name__')
+    logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
-    # create file handler which logs even debug messages
     fh = logging.FileHandler('doc2vec.log', mode='a')
     fh.setLevel(logging.INFO)
-    # create console handler with a higher log level
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
-    # create formatter and add it to the handlers
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     fh.setFormatter(formatter)
     ch.setFormatter(formatter)
-    # add the handlers to the logger
     logger.addHandler(fh)
     logger.addHandler(ch)
     ts = time.time()

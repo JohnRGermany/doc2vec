@@ -52,6 +52,7 @@ All packages can be installed using pip
 - scikit-learn
 - gensim
 - matplotlib
+- smart-open
 
 Run Locally
 -----------
