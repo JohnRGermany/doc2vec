@@ -1,6 +1,7 @@
 graph.*
 do_vectors/
 stored_models/
+doc_vectors/
 most_similars.json
 doc2vec.log
 __pycache__/

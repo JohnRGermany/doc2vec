@@ -16,6 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
+from accuracy import accuracy
 
 def plot_tsne(vectors, labels, filenames, doc_dir):
     """Plots the TSNE-reduced 2D vectors and annotated labels.
@@ -269,8 +270,8 @@ def create_model(doc_dir, num_features, num_iters, train_corpus):
         Description of returned object.
 
     """
-    model = gensim.models.doc2vec.Doc2Vec(size=num_features, min_count=2, iter=num_iters)
-    model.build_vocab(train_corpus)
+    model = gensim.models.doc2vec.Doc2Vec(vector_size=num_features, min_count=2, epochs=num_iters)
+    model.build_vocab(documents=train_corpus)
     logger.info('Created model on {0!s} documents'.format(len(train_corpus)))
 
     return model
@@ -324,6 +325,8 @@ def run(FLAGS):
     create_most_similar_json(model, train_corpus, n, labels, filenames, FLAGS.doc_dir)
     if FLAGS.plot != 0:
         plot_tsne(vectors, labels, filenames, FLAGS.doc_dir)
+    logger.info('Accuracy: {0!s}'.format(accuracy('most_similars.json')))
+
 
 
 if __name__ == '__main__':
@@ -379,11 +382,11 @@ if __name__ == '__main__':
     parser.add_argument(
       '--plot',
       type=int,
-      default=1,
+      default=0,
       help='Whether or an ouput plot is created. 0 for no plotting.'
     )
     FLAGS, unparsed = parser.parse_known_args()
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger('doc2vec')
     logger.setLevel(logging.INFO)
     fh = logging.FileHandler('doc2vec.log', mode='a')
     fh.setLevel(logging.INFO)
@@ -395,8 +398,7 @@ if __name__ == '__main__':
     logger.addHandler(fh)
     logger.addHandler(ch)
     ts = time.time()
-    t = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H-%M-%S')
-    logger.info('Starting new doc2vec instance - {0!s}'.format(t))
+    logger.info('Starting new doc2vec instance')
     if len(unparsed) != 0:
         logger.warning('Unknown arguments passed: {0!s}'.format(unparsed))
     run(FLAGS)
