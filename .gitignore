@@ -2,6 +2,10 @@ graph.*
 do_vectors/
 stored_models/
 doc_vectors/
+testdata/
 most_similars.json
 doc2vec.log
 __pycache__/
+documents/
+labels.json
+.DS_Store

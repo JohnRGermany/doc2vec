@@ -24,20 +24,19 @@ def _document_score(correct_label, sim_t, num_equal, num_total):
 def _average_overlap(a_ts, num_total):
     return sum(a_ts) / num_total
 
-def accuracy(filepath):
-    data = json.load(open(filepath, 'r'))
+def accuracy(data):
     overlap_scores = []
-    for k, v in data.items():
+    for v in data:
         correct_label = v['label']
         num_equal = 0
         num_total = 0
         ao_t = 0
         a_ts = []
-        for doc in v['most_similars']:
+        for sims in v['top_n']:
             num_total += 1
-            pred = 1 if doc['label'] == correct_label else 0
+            pred = 1 if sims[0] == correct_label else 0
             num_equal += pred
-            sim_t = _similarity_score(pred, doc['similarity'])
+            sim_t = _similarity_score(pred, sims[1])
             a_t = _document_score(correct_label, sim_t, num_equal, num_total)
             a_ts.append(a_t)
         ao_t = _average_overlap(a_ts, num_total)

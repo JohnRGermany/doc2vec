@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
 from accuracy import accuracy
+from operator import itemgetter
 
 def plot_tsne(vectors, labels, filenames, doc_dir):
     """Plots the TSNE-reduced 2D vectors and annotated labels.
@@ -55,12 +56,12 @@ def plot_tsne(vectors, labels, filenames, doc_dir):
     plt.savefig("graph.eps", format='eps', dpi=1000)
     logger.info('Created plot in file graph.eps')
 
-def get_labels(label_file):
+def get_labels(labels_file):
     """Reads the labels from disc.
 
     Parameters
     ----------
-    label_file : str
+    labels_file : str
         Relative path to the json-file containing filename - label pairs
 
     Returns
@@ -69,7 +70,7 @@ def get_labels(label_file):
         A python dict object contianing filename - label pairs
 
     """
-    with open(label_file) as f:
+    with open(labels_file) as f:
         labels = json.load(f)
         return labels
 
@@ -144,6 +145,71 @@ def save_model(model, save_dir):
     model.save(path)
     logger.info('Saved model to file {0!s}'.format(path))
 
+def get_label(filename, labels, doc_dir):
+    """Get label returns the label of a document.
+
+    Parameters
+    ----------
+    filename : str
+        Filename of the document
+    labels : dict[str][str]
+        Maps filenames and labels
+    doc_dir : type
+        Folder where the documents are saved
+
+    Returns
+    -------
+    str
+        Label
+
+    """
+    label = 'LABEL_NOT_FOUND'
+    try:
+        label = labels[filename.replace(doc_dir, '')]
+    except KeyError:
+        logger.warning('Did not find own label for file {0!s}'.format(filename))
+    return label
+
+def test_accuracy(model, test_corpus, n, labels, filenames, doc_dir):
+    """Short summary.
+
+    Parameters
+    ----------
+    model : gensim.models.doc2vec.Doc2Vec
+        Pointer to model to be trained.
+    train_corpus : [gensim.models.doc2vec.TaggedDocument] shape=(len(filenames),)
+        Contains all documents in required gensim format.
+    n : int
+        Number of most similar documents
+    labels : type
+        Description of parameter `labels`.
+    filenames : [str] shape=(None,)
+        Names of the files corresponding to each vector.
+    doc_dir : str
+        Relative directory to the documents.
+
+    Returns
+    -------
+    float
+        A value that describes the accuracy of the model with 1 being best
+
+    """
+    t1 = datetime.datetime.now()
+    logger.info('Starting accuracy test')
+    data = []
+    for d1_id in range(len(test_corpus)):
+        d = {"label": get_label(filenames[d1_id], labels, doc_dir)}
+        similarities = []
+        for d2_id in range(len(test_corpus)):
+            similarity = model.docvecs.similarity_unseen_docs(model, test_corpus[d1_id].words, test_corpus[d2_id].words)
+            similarities.append((get_label(filenames[d2_id], labels, doc_dir), similarity))
+        d["top_n"] = list(reversed(sorted(similarities, key=itemgetter(1))))[0:n]
+        data.append(d)
+    t2 = datetime.datetime.now()
+    delta = t2 - t1
+    logger.info('Finished accuracy test in {0!s} seconds'.format(delta.seconds))
+    return accuracy(data)
+
 def create_most_similar_json(model, train_corpus, n, labels, filenames, doc_dir):
     """Short summary.
 
@@ -171,15 +237,11 @@ def create_most_similar_json(model, train_corpus, n, labels, filenames, doc_dir)
     out_dict = {}
     for doc_id in range(len(train_corpus)):
         doc_dict = {}
-        own_label = 'LABEL_NOT_FOUND'
-        try:
-            own_label = labels[filenames[doc_id].replace(doc_dir, '')]
-        except KeyError:
-            logger.warning('Did not find own label for file {0!s}'
-                .format(filenames[doc_id].replace(doc_dir, '')))
+        own_label = get_label(filenames[doc_id], labels, doc_dir)
         doc_dict["label"] = own_label
         inferred_vector = model.infer_vector(train_corpus[doc_id].words)
         sims = model.docvecs.most_similar([inferred_vector], topn=n)
+        print(sims)
         similar_ids = [docid for docid, sim in sims]
         similarities = [sim for docid, sim in sims]
         similar_filenames = [filenames[i] for i in similar_ids]
@@ -227,7 +289,6 @@ def train_model(model, train_corpus):
     t2 = datetime.datetime.now()
     delta = t2 - t1
     logger.info('Finished training model in {0!s} seconds'.format(delta.seconds))
-
 
 def read_corpus(filenames):
     """Yields a training corpus from filenames.
@@ -295,9 +356,9 @@ def run(FLAGS):
         logger.error('Documents folder not found: {0!s}'.format(FLAGS.doc_dir))
         sys.exit(0)
     try:
-        assert os.path.exists(FLAGS.label_file)
+        assert os.path.exists(FLAGS.labels_file)
     except AssertionError:
-        logger.error('Labels file not found: {0!s}'.format(FLAGS.label_file))
+        logger.error('Labels file not found: {0!s}'.format(FLAGS.labels_file))
         sys.exit(0)
     if not os.path.exists(FLAGS.vec_dir):
           os.makedirs(FLAGS.vec_dir)
@@ -311,6 +372,12 @@ def run(FLAGS):
     FLAGS.doc_dir = os.path.join(FLAGS.doc_dir, '')
     #TODO: make train_corpus once-only generator stream to save memory space
     train_corpus = list(read_corpus(filenames))
+
+    test_doc_dir = 'testdata/documents/'
+    test_filenames = glob.glob(os.path.join(test_doc_dir, '*.txt'))
+    test_labels = get_labels('testdata/labels.json')
+    test_corpus = list(read_corpus(test_filenames))
+
     if FLAGS.model_file == '':
         model = create_model(FLAGS.doc_dir, FLAGS.num_features, FLAGS.num_iters, train_corpus)
     else:
@@ -320,12 +387,13 @@ def run(FLAGS):
     if FLAGS.save_dir != '':
         save_model(model, FLAGS.save_dir)
     vectors = vectorize_documents(model, filenames, FLAGS.vec_dir, train_corpus, FLAGS.num_features)
-    labels = get_labels(FLAGS.label_file)
+    labels = get_labels(FLAGS.labels_file)
     n = 10 if len(filenames) >= 10 else len(filenames)
-    create_most_similar_json(model, train_corpus, n, labels, filenames, FLAGS.doc_dir)
+    # model.delete_temporary_training_data(keep_doctags_vectors=False, keep_inference=False)
     if FLAGS.plot != 0:
         plot_tsne(vectors, labels, filenames, FLAGS.doc_dir)
-    logger.info('Accuracy: {0!s}'.format(accuracy('most_similars.json')))
+    accuracy = test_accuracy(model, test_corpus, n, test_labels, test_filenames, test_doc_dir)
+    logger.info('Accuracy: {0!s}'.format(accuracy))
 
 
 
@@ -344,7 +412,7 @@ if __name__ == '__main__':
       help='Directory to store document vectors in.'
     )
     parser.add_argument(
-      '--label_file',
+      '--labels_file',
       type=str,
       default='labels.json',
       help='File containing (document - label) pairs.'
