@@ -370,12 +370,13 @@ def run(FLAGS):
         sys.exit(0)
 
     FLAGS.doc_dir = os.path.join(FLAGS.doc_dir, '')
-    #TODO: make train_corpus once-only generator stream to save memory space
+
     train_corpus = list(read_corpus(filenames))
 
-    test_doc_dir = 'testdata/documents/'
+    test_doc_dir = os.path.join('testdata', 'documents', '')
+    test_labels_dir = os.path.join('testdata', 'labels.json')
     test_filenames = glob.glob(os.path.join(test_doc_dir, '*.txt'))
-    test_labels = get_labels('testdata/labels.json')
+    test_labels = get_labels(test_labels_dir)
     test_corpus = list(read_corpus(test_filenames))
 
     if FLAGS.model_file == '':
