@@ -170,7 +170,7 @@ def get_label(filename, labels, doc_dir):
         logger.warning('Did not find own label for file {0!s}'.format(filename))
     return label
 
-def test_accuracy(model, test_corpus, n, labels, filenames, doc_dir):
+def test_accuracy(model, test_corpus, n, labels, filenames, doc_dir, offset):
     """Short summary.
 
     Parameters
@@ -199,11 +199,13 @@ def test_accuracy(model, test_corpus, n, labels, filenames, doc_dir):
     data = []
     for d1_id in range(len(test_corpus)):
         d = {"label": get_label(filenames[d1_id], labels, doc_dir)}
-        similarities = []
-        for d2_id in range(len(test_corpus)):
-            similarity = model.docvecs.similarity_unseen_docs(model, test_corpus[d1_id].words, test_corpus[d2_id].words)
-            similarities.append((get_label(filenames[d2_id], labels, doc_dir), similarity))
-        d["top_n"] = list(reversed(sorted(similarities, key=itemgetter(1))))[0:n]
+        v = model.infer_vector(test_corpus[d1_id].words)
+        sims = model.docvecs.most_similar([v], topn=n)
+        similar_ids = [docid for docid, sim in sims]
+        similarities = [sim for docid, sim in sims]
+        similar_filenames = [filenames[i] for i in similar_ids]
+        d["top_n"] = [(get_label(similar_filenames[i], labels, doc_dir), similarities[i]) for i in range(len(similar_ids))]
+        print(d)
         data.append(d)
     t2 = datetime.datetime.now()
     delta = t2 - t1
@@ -241,7 +243,6 @@ def create_most_similar_json(model, train_corpus, n, labels, filenames, doc_dir)
         doc_dict["label"] = own_label
         inferred_vector = model.infer_vector(train_corpus[doc_id].words)
         sims = model.docvecs.most_similar([inferred_vector], topn=n)
-        print(sims)
         similar_ids = [docid for docid, sim in sims]
         similarities = [sim for docid, sim in sims]
         similar_filenames = [filenames[i] for i in similar_ids]
@@ -378,12 +379,14 @@ def run(FLAGS):
     test_labels = get_labels('testdata/labels.json')
     test_corpus = list(read_corpus(test_filenames))
 
+    corpus = train_corpus + test_corpus
+
     if FLAGS.model_file == '':
-        model = create_model(FLAGS.doc_dir, FLAGS.num_features, FLAGS.num_iters, train_corpus)
+        model = create_model(FLAGS.doc_dir, FLAGS.num_features, FLAGS.num_iters, corpus)
     else:
         model = load_model(FLAGS.model_file)
 
-    if FLAGS.training != 0: train_model(model, train_corpus)
+    if FLAGS.training != 0: train_model(model, corpus)
     if FLAGS.save_dir != '':
         save_model(model, FLAGS.save_dir)
     vectors = vectorize_documents(model, filenames, FLAGS.vec_dir, train_corpus, FLAGS.num_features)
@@ -392,7 +395,7 @@ def run(FLAGS):
     # model.delete_temporary_training_data(keep_doctags_vectors=False, keep_inference=False)
     if FLAGS.plot != 0:
         plot_tsne(vectors, labels, filenames, FLAGS.doc_dir)
-    accuracy = test_accuracy(model, test_corpus, n, test_labels, test_filenames, test_doc_dir)
+    accuracy = test_accuracy(model, test_corpus, n, test_labels, test_filenames, test_doc_dir, offset=len(train_corpus))
     logger.info('Accuracy: {0!s}'.format(accuracy))
 
 
