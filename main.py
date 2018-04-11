@@ -16,7 +16,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
-from accuracy import accuracy
 from operator import itemgetter
 
 def plot_tsne(vectors, labels, filenames, doc_dir):
@@ -171,7 +170,11 @@ def get_label(filename, labels, doc_dir):
     return label
 
 def test_accuracy(model, test_corpus, n, labels, filenames, doc_dir):
-    """Short summary.
+    """Calculates the accuracy based on a simple task where the distance between
+    three documents is measured, where two documents are similar while the other
+    is different. If the calculated distance between the similar documents is
+    smaller than the distance to the different one, it is considered a correct
+    prediction.
 
     Parameters
     ----------
@@ -181,7 +184,7 @@ def test_accuracy(model, test_corpus, n, labels, filenames, doc_dir):
         Contains all documents in required gensim format.
     n : int
         Number of most similar documents
-    labels : type
+    labels : [str]
         Description of parameter `labels`.
     filenames : [str] shape=(None,)
         Names of the files corresponding to each vector.
@@ -194,21 +197,84 @@ def test_accuracy(model, test_corpus, n, labels, filenames, doc_dir):
         A value that describes the accuracy of the model with 1 being best
 
     """
-    t1 = datetime.datetime.now()
+    t0 = datetime.datetime.now()
     logger.info('Starting accuracy test')
-    data = []
-    for d1_id in range(len(test_corpus)):
-        d = {"label": get_label(filenames[d1_id], labels, doc_dir)}
-        similarities = []
-        for d2_id in range(len(test_corpus)):
-            similarity = model.docvecs.similarity_unseen_docs(model, test_corpus[d1_id].words, test_corpus[d2_id].words)
-            similarities.append((get_label(filenames[d2_id], labels, doc_dir), similarity))
-        d["top_n"] = list(reversed(sorted(similarities, key=itemgetter(1))))[0:n]
-        data.append(d)
-    t2 = datetime.datetime.now()
-    delta = t2 - t1
-    logger.info('Finished accuracy test in {0!s} seconds'.format(delta.seconds))
-    return accuracy(data)
+
+    triplets = create_triplets_with_indices(n, labels, filenames, doc_dir)
+
+    fallback = False
+    for triplet in triplets:
+        try:
+            assert get_label(filenames[triplet[0]], labels, doc_dir) == get_label(filenames[triplet[1]], labels, doc_dir)
+            assert get_label(filenames[triplet[0]], labels, doc_dir) != get_label(filenames[triplet[2]], labels, doc_dir)
+        except AssertionError:
+            logger.warning('Train-labels are not sorted correctly. Falling back to slow triplet creation'.format(delta.seconds))
+            fallback = True
+            break
+    if fallback:
+        triplets = create_triplets_with_labels(n, labels, filenames, doc_dir)
+
+    correct_predictions = 0
+    for triplet in triplets:
+        d1 = 1 - model.docvecs.similarity_unseen_docs(model, test_corpus[triplet[0]].words, test_corpus[triplet[1]].words, steps=5)
+        d2 = 1 - model.docvecs.similarity_unseen_docs(model, test_corpus[triplet[0]].words, test_corpus[triplet[2]].words, steps=5)
+        if d1 < d2:
+            correct_predictions += 1
+
+    accuracy = correct_predictions / len(triplets)
+    delta = datetime.datetime.now() - t0
+    logger.info('Finished testing in {0!s} seconds'.format(delta.seconds))
+    return accuracy
+
+
+def create_triplets_with_labels(n, labels, filenames, doc_dir):
+    triplets = []
+    for _ in range(n):
+        i = random.randint(0, len(filenames)-1)
+        label = get_label(filenames[i], labels, doc_dir)
+
+        same_label = ""
+        same_label_i = 0
+        while True:
+            same_label_i = random.randint(0, len(filenames)-1)
+            found_label = get_label(filenames[same_label_i], labels, doc_dir)
+            if found_label == label:
+                same_label = found_label
+                break
+
+        different_label = ""
+        different_label_i = 0
+        while True:
+            different_label_i = random.randint(0, len(filenames)-1)
+            found_label = get_label(filenames[different_label_i], labels, doc_dir)
+            if found_label != label:
+                different_label = found_label
+                break
+
+        triplet = (i, same_label_i, different_label_i)
+        triplets.append(triplet)
+    return triplets
+
+def create_triplets_with_indices(n, labels, filenames, doc_dir):
+    triplets = []
+    for _ in range(n):
+        i = random.randint(0, len(filenames)-1)
+        # i = 6 => label_range = (0, 10)
+        label_range = (i - (i % 10), i + (10 - (i % 10)))
+        # [0,1,2,3,4,5,7,8,9]
+        same_label_candidates = list(range(label_range[0], label_range[1]))
+        same_label_candidates.remove(i)
+        same_label_i = random.choice(same_label_candidates)
+        # Use sets to perform fast set difference
+        all_labels = set(list(range(len(filenames))))
+        same_labels = set(list(range(label_range[0], label_range[1])))
+        # Convert back to list to apply random.choice
+        label_range = list(all_labels - same_labels)
+        different_label_i = random.choice(label_range)
+
+        triplet = (i, same_label_i, different_label_i)
+        triplets.append(triplet)
+    return triplets
 
 def create_most_similar_json(model, train_corpus, n, labels, filenames, doc_dir):
     """Short summary.
@@ -373,28 +439,55 @@ def run(FLAGS):
 
     train_corpus = list(read_corpus(filenames))
 
+
     test_doc_dir = os.path.join('testdata', 'documents', '')
-    test_labels_dir = os.path.join('testdata', 'labels.json')
-    test_filenames = glob.glob(os.path.join(test_doc_dir, '*.txt'))
-    test_labels = get_labels(test_labels_dir)
-    test_corpus = list(read_corpus(test_filenames))
+    test_labels_path = os.path.join('testdata', 'labels.json')
+    test_filenames = None
+    test_labels = None
+    test_corpus = []
+
+    if FLAGS.test != 0:
+        try:
+            assert os.path.exists(test_doc_dir)
+        except AssertionError:
+            logger.error('Documents folder not found: {0!s}. Provide test documents or turn off testing.'.format(test_doc_dir))
+            sys.exit(0)
+
+        test_filenames = glob.glob(os.path.join(test_doc_dir, '*.txt'))
+        try:
+            assert len(test_filenames) > 0
+        except AssertionError:
+            logger.error('No documents in folder: {0!s}. Provide test documents or turn off testing.'.format(test_doc_dir))
+            sys.exit(0)
+        try:
+            assert os.path.exists(test_labels_path)
+        except AssertionError:
+            logger.error('Labels file not found: {0!s}. Provide test labels or turn off testing.'.format(test_labels_path))
+            sys.exit(0)
+
+        test_labels = get_labels(test_labels_path)
+        test_corpus = list(read_corpus(test_filenames))
+
+    full_corpus = train_corpus + test_corpus
 
     if FLAGS.model_file == '':
-        model = create_model(FLAGS.doc_dir, FLAGS.num_features, FLAGS.num_iters, train_corpus)
+        model = create_model(FLAGS.doc_dir, FLAGS.num_features, FLAGS.num_iters, full_corpus)
     else:
         model = load_model(FLAGS.model_file)
 
     if FLAGS.training != 0: train_model(model, train_corpus)
+
     if FLAGS.save_dir != '':
         save_model(model, FLAGS.save_dir)
     vectors = vectorize_documents(model, filenames, FLAGS.vec_dir, train_corpus, FLAGS.num_features)
     labels = get_labels(FLAGS.labels_file)
-    n = 10 if len(filenames) >= 10 else len(filenames)
-    # model.delete_temporary_training_data(keep_doctags_vectors=False, keep_inference=False)
+
     if FLAGS.plot != 0:
         plot_tsne(vectors, labels, filenames, FLAGS.doc_dir)
-    accuracy = test_accuracy(model, test_corpus, n, test_labels, test_filenames, test_doc_dir)
-    logger.info('Accuracy: {0!s}'.format(accuracy))
+
+    if FLAGS.test != 0:
+        accuracy = test_accuracy(model, test_corpus, 1000, test_labels, test_filenames, test_doc_dir)
+        logger.info('Accuracy: {0!s}'.format(accuracy))
 
 
 
@@ -447,6 +540,12 @@ if __name__ == '__main__':
       type=int,
       default=1,
       help='Whether or not the model should be trained. 0 for no training.'
+    )
+    parser.add_argument(
+      '--test',
+      type=int,
+      default=1,
+      help='Whether or not the model should be tested. 0 for no tested.'
     )
     parser.add_argument(
       '--plot',
